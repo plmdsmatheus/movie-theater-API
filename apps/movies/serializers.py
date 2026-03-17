@@ -119,3 +119,43 @@ class SeatReleaseResponseSerializer(serializers.Serializer):
     session_id = serializers.IntegerField()
     seat_id = serializers.IntegerField()
     status = serializers.CharField()
+
+class SeatCheckoutRequestSerializer(serializers.Serializer):
+    """
+    I use this serializer to validate checkout requests.
+    """
+
+    seat_id = serializers.IntegerField()
+
+
+class TicketSerializer(serializers.ModelSerializer):
+    """
+    I use this serializer to expose ticket data after checkout.
+    """
+
+    movie_title = serializers.CharField(source='session.movie.title', read_only=True)
+    room_name = serializers.CharField(source='session.room.name', read_only=True)
+    seat_code = serializers.CharField(source='seat.seat_code', read_only=True)
+    session_start_time = serializers.DateTimeField(source='session.start_time', read_only=True)
+
+    class Meta:
+        model = Ticket
+        fields = [
+            'id',
+            'ticket_code',
+            'status',
+            'purchased_at',
+            'movie_title',
+            'room_name',
+            'seat_code',
+            'session_start_time',
+        ]
+
+
+class SeatCheckoutResponseSerializer(serializers.Serializer):
+    """
+    I use this serializer to document successful checkout responses.
+    """
+
+    message = serializers.CharField()
+    ticket = TicketSerializer()

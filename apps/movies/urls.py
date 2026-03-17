@@ -5,6 +5,7 @@ from .views import (
     SessionSeatMapView,
     SessionSeatReserveView,
     SessionSeatReleaseView,
+    SessionSeatCheckoutView,
 )
 
 urlpatterns = [

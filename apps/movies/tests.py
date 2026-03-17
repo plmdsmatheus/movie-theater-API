@@ -423,3 +423,155 @@ class SessionSeatReleaseTests(MovieBaseTestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+class SessionSeatCheckoutTests(MovieBaseTestCase):
+    """
+    I test CASE 6: checkout and ticket generation.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.checkout_url = reverse(
+            "session-seat-checkout",
+            kwargs={"session_id": self.upcoming_session.id}
+        )
+
+    def authenticate(self, user=None):
+        super().authenticate(user=user)
+
+    @patch("apps.movies.views.SeatLockService.get_lock_data")
+    @patch("apps.movies.views.SeatLockService.release_lock")
+    def test_authenticated_user_can_checkout_reserved_seat(self, mock_release_lock, mock_get_lock_data):
+        """
+        I verify that an authenticated user can convert their own lock into a ticket.
+        """
+        self.authenticate()
+
+        mock_get_lock_data.return_value = {
+            "user_id": self.user.id,
+            "session_id": self.upcoming_session.id,
+            "seat_id": self.seat_a1.id,
+        }
+        mock_release_lock.return_value = True
+
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": self.seat_a1.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["message"], "Ticket generated successfully.")
+        self.assertEqual(response.data["ticket"]["seat_code"], "A1")
+        self.assertEqual(Ticket.objects.count(), 1)
+
+    def test_unauthenticated_user_cannot_checkout(self):
+        """
+        I verify that checkout requires authentication.
+        """
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": self.seat_a1.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    @patch("apps.movies.views.SeatLockService.get_lock_data")
+    def test_user_cannot_checkout_without_active_lock(self, mock_get_lock_data):
+        """
+        I verify that checkout fails when no active lock exists.
+        """
+        self.authenticate()
+
+        mock_get_lock_data.return_value = None
+
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": self.seat_a1.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["detail"], "No active seat lock was found for this seat.")
+
+    @patch("apps.movies.views.SeatLockService.get_lock_data")
+    def test_user_cannot_checkout_another_users_lock(self, mock_get_lock_data):
+        """
+        I verify that a user cannot checkout a seat locked by another user.
+        """
+        self.authenticate()
+
+        mock_get_lock_data.return_value = {
+            "user_id": self.other_user.id,
+            "session_id": self.upcoming_session.id,
+            "seat_id": self.seat_a1.id,
+        }
+
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": self.seat_a1.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["detail"], "You cannot checkout a seat reserved by another user.")
+
+    @patch("apps.movies.views.SeatLockService.get_lock_data")
+    def test_user_cannot_checkout_purchased_seat(self, mock_get_lock_data):
+        """
+        I verify that checkout fails if the seat has already been purchased.
+        """
+        self.authenticate()
+
+        Ticket.objects.create(
+            user=self.user,
+            session=self.upcoming_session,
+            seat=self.seat_a1,
+            ticket_code="existing-ticket",
+            status=Ticket.STATUS_ACTIVE
+        )
+
+        mock_get_lock_data.return_value = {
+            "user_id": self.user.id,
+            "session_id": self.upcoming_session.id,
+            "seat_id": self.seat_a1.id,
+        }
+
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": self.seat_a1.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["detail"], "This seat has already been purchased.")
+
+    @patch("apps.movies.views.SeatLockService.get_lock_data")
+    def test_user_cannot_checkout_seat_from_another_room(self, mock_get_lock_data):
+        """
+        I verify that checkout fails if the seat does not belong to the session room.
+        """
+        self.authenticate()
+
+        other_room = Room.objects.create(
+            name="Room 2",
+            total_rows=1,
+            total_columns=1,
+            is_active=True
+        )
+        foreign_seat = Seat.objects.create(room=other_room, row_label="A", number=1)
+
+        mock_get_lock_data.return_value = {
+            "user_id": self.user.id,
+            "session_id": self.upcoming_session.id,
+            "seat_id": foreign_seat.id,
+        }
+
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": foreign_seat.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

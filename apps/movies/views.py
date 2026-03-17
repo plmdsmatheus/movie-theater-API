@@ -1,3 +1,5 @@
+import uuid
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiResponse
@@ -13,6 +15,9 @@ from .serializers import (
     SeatReservationRequestSerializer,
     SeatReservationResponseSerializer,
     SeatReleaseResponseSerializer,
+    SeatCheckoutRequestSerializer,
+    SeatCheckoutResponseSerializer,
+    TicketSerializer,
 )
 from .services import SeatLockService
 
@@ -501,3 +506,144 @@ class SessionSeatReleaseView(APIView):
 
         response_serializer = SeatReleaseResponseSerializer(response_payload)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+@extend_schema(
+    tags=['Sessions'],
+    summary='Checkout a reserved seat and generate a ticket',
+    description=(
+        'Converts a temporary Redis seat lock into a permanent ticket. '
+        'The authenticated user must own the active lock for the selected seat.'
+    ),
+    request=SeatCheckoutRequestSerializer,
+    responses={
+        201: OpenApiResponse(
+            response=SeatCheckoutResponseSerializer,
+            description='Ticket generated successfully.'
+        ),
+        400: OpenApiResponse(description='Invalid request.'),
+        401: OpenApiResponse(description='Authentication required.'),
+        403: OpenApiResponse(description='The lock does not belong to the authenticated user.'),
+        404: OpenApiResponse(description='Session, seat, or active lock not found.'),
+        409: OpenApiResponse(description='Seat already purchased.')
+    },
+    examples=[
+        OpenApiExample(
+            'Checkout request',
+            value={
+                'seat_id': 12
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            'Checkout success response',
+            value={
+                'message': 'Ticket generated successfully.',
+                'ticket': {
+                    'id': 1,
+                    'ticket_code': 'b7b8e0b2-4dd5-4b47-bf43-6c4f5f0ef111',
+                    'status': 'ACTIVE',
+                    'purchased_at': '2026-03-17T14:00:00-03:00',
+                    'movie_title': 'Dune: Part Two',
+                    'room_name': 'Room 1',
+                    'seat_code': 'A2',
+                    'session_start_time': '2026-03-18T19:00:00-03:00'
+                }
+            },
+            response_only=True,
+            status_codes=['201'],
+        ),
+    ],
+)
+class SessionSeatCheckoutView(APIView):
+    """
+    CASE 6:
+    I convert a temporary seat lock into a permanent ticket.
+
+    I require authentication because checkout is a user-owned action.
+    I only allow checkout when the authenticated user owns the active Redis lock.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        """
+        I validate the request, confirm that the seat belongs to the session room,
+        verify the active lock ownership, prevent duplicate purchases, create the
+        ticket in the database, and finally release the Redis lock.
+        """
+        serializer = SeatCheckoutRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        seat_id = serializer.validated_data["seat_id"]
+
+        session = get_object_or_404(
+            Session.objects.select_related("room", "movie"),
+            id=session_id,
+            is_active=True,
+            movie__is_active=True,
+            start_time__gt=timezone.now(),
+        )
+
+        seat = get_object_or_404(
+            Seat,
+            id=seat_id,
+            room=session.room,
+        )
+
+        lock_data = SeatLockService.get_lock_data(
+            session_id=session.id,
+            seat_id=seat.id,
+        )
+
+        if not lock_data:
+            return Response(
+                {"detail": "No active seat lock was found for this seat."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if lock_data.get("user_id") != request.user.id:
+            return Response(
+                {"detail": "You cannot checkout a seat reserved by another user."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        existing_ticket = Ticket.objects.filter(
+            session=session,
+            seat=seat,
+            status__in=[Ticket.STATUS_ACTIVE, Ticket.STATUS_USED],
+        ).first()
+
+        if existing_ticket:
+            return Response(
+                {"detail": "This seat has already been purchased."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            with transaction.atomic():
+                ticket = Ticket.objects.create(
+                    user=request.user,
+                    session=session,
+                    seat=seat,
+                    ticket_code=str(uuid.uuid4()),
+                    status=Ticket.STATUS_ACTIVE,
+                )
+        except IntegrityError:
+            return Response(
+                {"detail": "This seat has already been purchased."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        SeatLockService.release_lock(
+            session_id=session.id,
+            seat_id=seat.id,
+            user_id=request.user.id,
+        )
+
+        response_payload = {
+            "message": "Ticket generated successfully.",
+            "ticket": TicketSerializer(ticket).data,
+        }
+
+        response_serializer = SeatCheckoutResponseSerializer(response_payload)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
