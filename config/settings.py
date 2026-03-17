@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     # DRF and JWT
     'rest_framework',
     'rest_framework_simplejwt',
+    'drf_spectacular',
 
     # apps
     'apps.users',
@@ -107,6 +108,15 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Cinépolis Natal API',
+    'DESCRIPTION': 'API for managing movies, sessions, reservations, and tickets.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
 }
 
 SIMPLE_JWT = {
