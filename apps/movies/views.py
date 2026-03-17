@@ -18,6 +18,7 @@ from .serializers import (
     SeatCheckoutRequestSerializer,
     SeatCheckoutResponseSerializer,
     TicketSerializer,
+    MyTicketListSerializer,
 )
 from .services import SeatLockService
 
@@ -642,8 +643,88 @@ class SessionSeatCheckoutView(APIView):
 
         response_payload = {
             "message": "Ticket generated successfully.",
-            "ticket": TicketSerializer(ticket).data,
+            "ticket": ticket,
         }
 
         response_serializer = SeatCheckoutResponseSerializer(response_payload)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+@extend_schema(
+    tags=['Tickets'],
+    summary='List tickets for the authenticated user',
+    description=(
+        'Returns tickets that belong to the authenticated user. '
+        'The optional "type" query parameter can be used to filter results:\n'
+        '- active: upcoming active tickets only\n'
+        '- history: complete purchase history\n'
+        '- omitted: all tickets'
+    ),
+    responses={
+        200: OpenApiResponse(
+            response=MyTicketListSerializer(many=True),
+            description='Tickets returned successfully.'
+        ),
+        401: OpenApiResponse(description='Authentication required.')
+    },
+    examples=[
+        OpenApiExample(
+            'My tickets response',
+            value=[
+                {
+                    'id': 1,
+                    'ticket_code': '5f40cb67-c7cc-4c72-95c0-7fce7686f0c2',
+                    'status': 'ACTIVE',
+                    'purchased_at': '2026-03-17T15:00:00-03:00',
+                    'movie_title': 'Dune: Part Two',
+                    'room_name': 'Room 1',
+                    'seat_code': 'A1',
+                    'session_start_time': '2026-03-18T19:00:00-03:00',
+                    'session_end_time': '2026-03-18T21:46:00-03:00',
+                    'session_language': 'SUB',
+                    'session_format': '2D',
+                    'is_upcoming': True
+                }
+            ],
+            response_only=True,
+            status_codes=['200'],
+        )
+    ],
+)
+class MyTicketsListView(generics.ListAPIView):
+    """
+    CASE 7:
+    I return tickets that belong to the authenticated user.
+
+    I support two main modes:
+    - active: upcoming tickets that are still active
+    - history: complete ticket history
+
+    If no filter is provided, I return all tickets for the authenticated user.
+    """
+
+    serializer_class = MyTicketListSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        I filter tickets according to the authenticated user and the optional
+        query parameter provided by the client.
+        """
+        ticket_type = self.request.query_params.get("type")
+
+        queryset = (
+            Ticket.objects.select_related("session", "session__movie", "session__room", "seat")
+            .filter(user=self.request.user)
+            .order_by("-purchased_at")
+        )
+
+        if ticket_type == "active":
+            queryset = queryset.filter(
+                status=Ticket.STATUS_ACTIVE,
+                session__start_time__gt=timezone.now(),
+            )
+
+        elif ticket_type == "history":
+            queryset = queryset
+
+        return queryset

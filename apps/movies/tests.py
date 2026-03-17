@@ -575,3 +575,95 @@ class SessionSeatCheckoutTests(MovieBaseTestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+class MyTicketsListTests(MovieBaseTestCase):
+    """
+    I test CASE 7: the authenticated user's ticket portal.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.my_tickets_url = reverse("my-tickets")
+
+        self.future_ticket = Ticket.objects.create(
+            user=self.user,
+            session=self.upcoming_session,
+            seat=self.seat_a1,
+            ticket_code="future-ticket",
+            status=Ticket.STATUS_ACTIVE
+        )
+
+        self.past_ticket = Ticket.objects.create(
+            user=self.user,
+            session=self.past_session,
+            seat=self.seat_a2,
+            ticket_code="past-ticket",
+            status=Ticket.STATUS_ACTIVE
+        )
+
+        self.used_ticket = Ticket.objects.create(
+            user=self.user,
+            session=self.upcoming_session,
+            seat=self.seat_a3,
+            ticket_code="used-ticket",
+            status=Ticket.STATUS_USED
+        )
+
+        self.other_user_ticket = Ticket.objects.create(
+            user=self.other_user,
+            session=self.upcoming_session,
+            seat=self.seat_b1,
+            ticket_code="other-user-ticket",
+            status=Ticket.STATUS_ACTIVE
+        )
+
+    def test_authenticated_user_can_list_all_own_tickets(self):
+        """
+        I verify that an authenticated user can list only their own tickets.
+        """
+        self.authenticate()
+
+        response = self.client.get(self.my_tickets_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 3)
+
+        returned_codes = [ticket["ticket_code"] for ticket in response.data]
+        self.assertIn("future-ticket", returned_codes)
+        self.assertIn("past-ticket", returned_codes)
+        self.assertIn("used-ticket", returned_codes)
+        self.assertNotIn("other-user-ticket", returned_codes)
+
+    def test_user_can_filter_only_active_upcoming_tickets(self):
+        """
+        I verify that the active filter returns only upcoming active tickets.
+        """
+        self.authenticate()
+
+        response = self.client.get(f"{self.my_tickets_url}?type=active")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        returned_codes = [ticket["ticket_code"] for ticket in response.data]
+        self.assertIn("future-ticket", returned_codes)
+        self.assertNotIn("past-ticket", returned_codes)
+        self.assertNotIn("used-ticket", returned_codes)
+
+    def test_user_can_filter_ticket_history(self):
+        """
+        I verify that the history filter returns the complete ticket history.
+        """
+        self.authenticate()
+
+        response = self.client.get(f"{self.my_tickets_url}?type=history")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 3)
+
+    def test_unauthenticated_user_cannot_access_my_tickets(self):
+        """
+        I verify that authentication is required for the ticket portal.
+        """
+        response = self.client.get(self.my_tickets_url)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

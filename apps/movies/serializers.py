@@ -159,3 +159,40 @@ class SeatCheckoutResponseSerializer(serializers.Serializer):
 
     message = serializers.CharField()
     ticket = TicketSerializer()
+
+class MyTicketListSerializer(serializers.ModelSerializer):
+    """
+    I use this serializer to expose ticket data in the user's ticket portal.
+    """
+
+    movie_title = serializers.CharField(source='session.movie.title', read_only=True)
+    room_name = serializers.CharField(source='session.room.name', read_only=True)
+    seat_code = serializers.CharField(source='seat.seat_code', read_only=True)
+    session_start_time = serializers.DateTimeField(source='session.start_time', read_only=True)
+    session_end_time = serializers.DateTimeField(source='session.end_time', read_only=True)
+    session_language = serializers.CharField(source='session.language', read_only=True)
+    session_format = serializers.CharField(source='session.format_type', read_only=True)
+    is_upcoming = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Ticket
+        fields = [
+            'id',
+            'ticket_code',
+            'status',
+            'purchased_at',
+            'movie_title',
+            'room_name',
+            'seat_code',
+            'session_start_time',
+            'session_end_time',
+            'session_language',
+            'session_format',
+            'is_upcoming',
+        ]
+
+    def get_is_upcoming(self, obj):
+        """
+        I return whether the related session is still in the future.
+        """
+        return obj.session.start_time > timezone.now()
