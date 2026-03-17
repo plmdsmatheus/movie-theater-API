@@ -15,6 +15,8 @@ from .serializers import (
     AccessTokenResponseSerializer,
 )
 
+from apps.core.throttles import LoginRateThrottle, RegisterRateThrottle
+
 
 @extend_schema(
     tags=['Users'],
@@ -53,6 +55,7 @@ from .serializers import (
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RegisterRateThrottle]
 
 
 @extend_schema(
@@ -90,6 +93,7 @@ class RegisterView(generics.CreateAPIView):
 class LoginView(TokenObtainPairView):
     serializer_class = LoginSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RegisterRateThrottle]
 
 
 @extend_schema(

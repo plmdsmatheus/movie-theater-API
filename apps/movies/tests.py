@@ -1,6 +1,5 @@
 from datetime import timedelta
 from unittest.mock import patch
-
 from django.contrib.auth.models import User
 from django.urls import reverse
 from django.utils import timezone
@@ -580,6 +579,37 @@ class SessionSeatCheckoutTests(MovieBaseTestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    @patch("apps.movies.views.send_ticket_confirmation_email_task.delay")
+    @patch("apps.movies.views.SeatLockService.get_lock_data")
+    @patch("apps.movies.views.SeatLockService.release_lock")
+    def test_authenticated_user_can_checkout_reserved_seat(
+        self,
+        mock_release_lock,
+        mock_get_lock_data,
+        mock_send_email_task,
+    ):
+        """
+        I verify that an authenticated user can convert their own lock into a ticket
+        and trigger the confirmation email task.
+        """
+        self.authenticate()
+
+        mock_get_lock_data.return_value = {
+            "user_id": self.user.id,
+            "session_id": self.upcoming_session.id,
+            "seat_id": self.seat_a1.id,
+        }
+        mock_release_lock.return_value = True
+
+        response = self.client.post(
+            self.checkout_url,
+            {"seat_id": self.seat_a1.id},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Ticket.objects.count(), 1)
+        mock_send_email_task.assert_called_once()
     
 class MyTicketsListTests(MovieBaseTestCase):
     """

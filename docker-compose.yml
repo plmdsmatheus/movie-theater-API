@@ -49,6 +49,40 @@ services:
       redis:
         condition: service_healthy
 
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cinepolis_celery_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    command: poetry run celery -A config worker -l info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cinepolis_celery_beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    command: poetry run celery -A config beat -l info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:

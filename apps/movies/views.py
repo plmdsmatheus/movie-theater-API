@@ -1,4 +1,7 @@
 import uuid
+from django.conf import settings
+from django.core.cache import cache
+from rest_framework.response import Response
 from django.db import transaction, IntegrityError
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -6,6 +9,12 @@ from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParamete
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from .tasks import send_ticket_confirmation_email_task
+
+from apps.core.cache_keys import (
+    build_movies_list_cache_key,
+    build_movie_sessions_cache_key,
+)
 
 from .models import Movie, Session, Seat, SeatLock, Ticket
 from .serializers import (
@@ -21,6 +30,7 @@ from .serializers import (
     MyTicketListSerializer,
 )
 from .services import SeatLockService
+from apps.core.throttles import SeatReserveRateThrottle, SeatCheckoutRateThrottle
 
 @extend_schema(
     tags=['Movies'],
@@ -63,6 +73,7 @@ from .services import SeatLockService
         )
     ],
 )
+
 class MovieListView(generics.ListAPIView):
     """
     CASE 2:
@@ -87,6 +98,33 @@ class MovieListView(generics.ListAPIView):
         - filtering by genre
         """
         return Movie.objects.filter(is_active=True).order_by('title')
+
+    def list(self, request, *args, **kwargs):
+        """
+        I cache paginated movie list responses in Redis to improve performance
+        for high-read traffic.
+        """
+        page = request.query_params.get("page", 1)
+        page_size = request.query_params.get("page_size", 10)
+
+        cache_key = build_movies_list_cache_key(
+            page=page,
+            page_size=page_size,
+        )
+
+        cached_response = cache.get(cache_key)
+        if cached_response is not None:
+            return Response(cached_response)
+
+        response = super().list(request, *args, **kwargs)
+
+        cache.set(
+            cache_key,
+            response.data,
+            timeout=settings.MOVIES_LIST_CACHE_TTL,
+        )
+
+        return response
 
 
 @extend_schema(
@@ -139,12 +177,13 @@ class MovieListView(generics.ListAPIView):
         )
     ],
 )
+
 class MovieSessionListView(generics.ListAPIView):
     """
     CASE 3:
     List all available sessions for a specific movie.
 
-    Return only:
+    I return only:
     - sessions linked to the requested movie
     - sessions marked as active
     - sessions that have not started yet
@@ -161,7 +200,7 @@ class MovieSessionListView(generics.ListAPIView):
 
     def get_queryset(self):
         """
-        Filters sessions by:
+        I filter sessions by:
         1. movie ID from the URL
         2. active sessions only
         3. upcoming sessions only
@@ -181,6 +220,35 @@ class MovieSessionListView(generics.ListAPIView):
             )
             .order_by('start_time')
         )
+
+    def list(self, request, *args, **kwargs):
+        """
+        I cache paginated session list responses in Redis because this endpoint
+        is expected to be read frequently by users browsing movie sessions.
+        """
+        movie_id = self.kwargs["movie_id"]
+        page = request.query_params.get("page", 1)
+        page_size = request.query_params.get("page_size", 10)
+
+        cache_key = build_movie_sessions_cache_key(
+            movie_id=movie_id,
+            page=page,
+            page_size=page_size,
+        )
+
+        cached_response = cache.get(cache_key)
+        if cached_response is not None:
+            return Response(cached_response)
+
+        response = super().list(request, *args, **kwargs)
+
+        cache.set(
+            cache_key,
+            response.data,
+            timeout=settings.MOVIE_SESSIONS_CACHE_TTL,
+        )
+
+        return response
 
 @extend_schema(
     tags=['Sessions'],
@@ -366,6 +434,7 @@ class SessionSeatReserveView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [SeatReserveRateThrottle]
 
     def post(self, request, session_id):
         """
@@ -565,6 +634,7 @@ class SessionSeatCheckoutView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [SeatReserveRateThrottle]
 
     def post(self, request, session_id):
         """
@@ -645,6 +715,15 @@ class SessionSeatCheckoutView(APIView):
             "message": "Ticket generated successfully.",
             "ticket": ticket,
         }
+
+        send_ticket_confirmation_email_task.delay(
+            user_email=request.user.email,
+            movie_title=session.movie.title,
+            room_name=session.room.name,
+            seat_code=seat.seat_code,
+            session_start_time=session.start_time.isoformat(),
+            ticket_code=ticket.ticket_code,
+        )
 
         response_serializer = SeatCheckoutResponseSerializer(response_payload)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)

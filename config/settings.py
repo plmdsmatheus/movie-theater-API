@@ -107,8 +107,19 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.DefaultPagination',
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+        'login': '10/minute',
+        'register': '5/minute',
+        'seat_reserve': '20/minute',
+        'seat_checkout': '20/minute',
+    },
 }
 
 SPECTACULAR_SETTINGS = {
@@ -134,11 +145,35 @@ CACHES = {
     }
 }
 
+# Cache for Movies and Sessions
+MOVIES_LIST_CACHE_TTL = config('MOVIES_LIST_CACHE_TTL', default=300, cast=int)
+MOVIE_SESSIONS_CACHE_TTL = config('MOVIE_SESSIONS_CACHE_TTL', default=120, cast=int)
+
+# Lock Seat
 SEAT_LOCK_TIMEOUT = config('SEAT_LOCK_TIMEOUT', default=600, cast=int)
 
-LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'America/Fortaleza'
+
+
+# Celery Configs
+CELERY_BROKER_URL = config("REDIS_URL", default="redis://redis:6379/1")
+CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://redis:6379/1")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-movie-cache": {
+        "task": "apps.movies.tasks.cleanup_movie_cache_task",
+        "schedule": 300.0,
+    },
+}
+
+
+LANGUAGE_CODE = 'en-us'
 
 USE_I18N = True
 
@@ -148,3 +183,7 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Configuration to display the “Email” field in the container log
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "no-reply@cinepolis.local"
