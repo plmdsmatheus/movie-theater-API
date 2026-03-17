@@ -1,11 +1,11 @@
+from django.utils import timezone
 from rest_framework import serializers
-from .models import Movie, Room, Session
+from .models import Movie, Room, Session, Seat, SeatLock, Ticket
 
 
 class MovieListSerializer(serializers.ModelSerializer):
     """
-    Serializer used to list movies in CASE 2.
-    Keeps the response clean and focused on catalog information.
+    I use this serializer to list movies in CASE 2.
     """
 
     class Meta:
@@ -23,8 +23,7 @@ class MovieListSerializer(serializers.ModelSerializer):
 
 class RoomSerializer(serializers.ModelSerializer):
     """
-    Serializer for room data.
-    Used as nested data inside session responses.
+    I use this serializer to expose room data inside session responses.
     """
 
     capacity = serializers.IntegerField(read_only=True)
@@ -42,8 +41,7 @@ class RoomSerializer(serializers.ModelSerializer):
 
 class SessionListSerializer(serializers.ModelSerializer):
     """
-    Serializer used to list sessions for a specific movie in CASE 3.
-    Includes nested room information and useful computed fields.
+    I use this serializer to list sessions for a specific movie in CASE 3.
     """
 
     room = RoomSerializer(read_only=True)
@@ -64,3 +62,31 @@ class SessionListSerializer(serializers.ModelSerializer):
             'is_active',
             'is_upcoming',
         ]
+
+
+class SeatMapSeatSerializer(serializers.Serializer):
+    """
+    I use this serializer to represent one seat in the seat map response.
+    """
+
+    seat_id = serializers.IntegerField()
+    seat_code = serializers.CharField()
+    row = serializers.CharField()
+    number = serializers.IntegerField()
+    status = serializers.CharField()
+
+
+class SeatMapResponseSerializer(serializers.Serializer):
+    """
+    I use this serializer to document the seat map endpoint response.
+    """
+
+    session_id = serializers.IntegerField()
+    movie = serializers.CharField()
+    room = serializers.CharField()
+    start_time = serializers.DateTimeField()
+    seat_map = serializers.ListField(
+        child=serializers.ListField(
+            child=SeatMapSeatSerializer()
+        )
+    )

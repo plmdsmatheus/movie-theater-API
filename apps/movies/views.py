@@ -1,9 +1,16 @@
 from django.utils import timezone
 from rest_framework import generics, permissions
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiResponse
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
 
-from .models import Movie, Session
-from .serializers import MovieListSerializer, SessionListSerializer
+from .models import Movie, Session, SeatLock, Ticket
+from .serializers import (
+    MovieListSerializer,
+    SessionListSerializer,
+    SeatMapResponseSerializer,
+)
 
 
 @extend_schema(
@@ -165,3 +172,142 @@ class MovieSessionListView(generics.ListAPIView):
             )
             .order_by('start_time')
         )
+
+@extend_schema(
+    tags=['Sessions'],
+    summary='Get seat map for a movie session',
+    description=(
+        'Returns the seat map for a specific session. '
+        'Each seat is marked as AVAILABLE, RESERVED, or PURCHASED.'
+    ),
+    parameters=[
+        OpenApiParameter(
+            name='session_id',
+            type=int,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='ID of the session whose seat map should be returned.'
+        )
+    ],
+    responses={
+        200: OpenApiResponse(
+            response=SeatMapResponseSerializer,
+            description='Seat map returned successfully.'
+        ),
+        404: OpenApiResponse(description='Session not found.')
+    },
+    examples=[
+        OpenApiExample(
+            'Seat map response',
+            value={
+                'session_id': 1,
+                'movie': 'Dune: Part Two',
+                'room': 'Room 1',
+                'start_time': '2026-03-18T19:00:00-03:00',
+                'seat_map': [
+                    [
+                        {
+                            'seat_id': 1,
+                            'seat_code': 'A1',
+                            'row': 'A',
+                            'number': 1,
+                            'status': 'AVAILABLE'
+                        },
+                        {
+                            'seat_id': 2,
+                            'seat_code': 'A2',
+                            'row': 'A',
+                            'number': 2,
+                            'status': 'RESERVED'
+                        }
+                    ],
+                    [
+                        {
+                            'seat_id': 11,
+                            'seat_code': 'B1',
+                            'row': 'B',
+                            'number': 1,
+                            'status': 'PURCHASED'
+                        }
+                    ]
+                ]
+            },
+            response_only=True,
+            status_codes=['200'],
+        )
+    ],
+)
+class SessionSeatMapView(APIView):
+    """
+    CASE 4:
+    Return the seat map for a specific movie session.
+
+    Classify each seat using the following priority:
+    1. PURCHASED
+    2. RESERVED
+    3. AVAILABLE
+
+    I use this priority because a purchased seat should always take precedence
+    over any temporary lock information.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, session_id):
+        """
+        I build the full seat map for the session's room and annotate each seat
+        with its current status for that specific session.
+        """
+        session = get_object_or_404(
+            Session.objects.select_related('movie', 'room'),
+            id=session_id,
+            is_active=True,
+            movie__is_active=True,
+        )
+
+        room_seats = session.room.seats.all().order_by('row_label', 'number')
+
+        purchased_seat_ids = set(
+            Ticket.objects.filter(
+                session=session,
+                status__in=[Ticket.STATUS_ACTIVE, Ticket.STATUS_USED]
+            ).values_list('seat_id', flat=True)
+        )
+
+        reserved_seat_ids = set(
+            SeatLock.objects.filter(
+                session=session,
+                status=SeatLock.STATUS_ACTIVE,
+                expires_at__gt=timezone.now()
+            ).values_list('seat_id', flat=True)
+        )
+
+        grouped_rows = {}
+        for seat in room_seats:
+            if seat.id in purchased_seat_ids:
+                status = 'PURCHASED'
+            elif seat.id in reserved_seat_ids:
+                status = 'RESERVED'
+            else:
+                status = 'AVAILABLE'
+
+            grouped_rows.setdefault(seat.row_label, []).append({
+                'seat_id': seat.id,
+                'seat_code': seat.seat_code,
+                'row': seat.row_label,
+                'number': seat.number,
+                'status': status,
+            })
+
+        seat_map = list(grouped_rows.values())
+
+        payload = {
+            'session_id': session.id,
+            'movie': session.movie.title,
+            'room': session.room.name,
+            'start_time': session.start_time,
+            'seat_map': seat_map,
+        }
+
+        serializer = SeatMapResponseSerializer(payload)
+        return Response(serializer.data)
