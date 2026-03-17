@@ -1,5 +1,5 @@
 from django.utils import timezone
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -10,8 +10,11 @@ from .serializers import (
     MovieListSerializer,
     SessionListSerializer,
     SeatMapResponseSerializer,
+    SeatReservationRequestSerializer,
+    SeatReservationResponseSerializer,
+    SeatReleaseResponseSerializer,
 )
-
+from .services import SeatLockService
 
 @extend_schema(
     tags=['Movies'],
@@ -274,13 +277,7 @@ class SessionSeatMapView(APIView):
             ).values_list('seat_id', flat=True)
         )
 
-        reserved_seat_ids = set(
-            SeatLock.objects.filter(
-                session=session,
-                status=SeatLock.STATUS_ACTIVE,
-                expires_at__gt=timezone.now()
-            ).values_list('seat_id', flat=True)
-        )
+        reserved_seat_ids = SeatLockService.list_reserved_seat_ids_for_session(session_id=session.id)
 
         grouped_rows = {}
         for seat in room_seats:
@@ -311,3 +308,196 @@ class SessionSeatMapView(APIView):
 
         serializer = SeatMapResponseSerializer(payload)
         return Response(serializer.data)
+    
+@extend_schema(
+    tags=['Sessions'],
+    summary='Reserve a seat temporarily for a movie session',
+    description=(
+        'Creates a temporary Redis lock for a seat in a specific session. '
+        'The lock expires automatically after 10 minutes.'
+    ),
+    request=SeatReservationRequestSerializer,
+    responses={
+        200: OpenApiResponse(
+            response=SeatReservationResponseSerializer,
+            description='Seat reserved successfully.'
+        ),
+        400: OpenApiResponse(description='Invalid request or seat does not belong to the session room.'),
+        401: OpenApiResponse(description='Authentication required.'),
+        409: OpenApiResponse(description='Seat already reserved or purchased.'),
+        404: OpenApiResponse(description='Session or seat not found.')
+    },
+    examples=[
+        OpenApiExample(
+            'Reservation request',
+            value={
+                'seat_id': 12
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            'Reservation success response',
+            value={
+                'message': 'Seat reserved successfully.',
+                'session_id': 1,
+                'seat_id': 12,
+                'status': 'RESERVED',
+                'expires_in_seconds': 600
+            },
+            response_only=True,
+            status_codes=['200'],
+        ),
+    ],
+)
+class SessionSeatReserveView(APIView):
+    """
+    CASE 5:
+    I create a temporary Redis lock for a seat in a session.
+
+    I require authentication because seat reservation is a user-owned action.
+    A public user may browse movies and sessions, but only an authenticated
+    user can reserve a seat.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        """
+        I validate the request, confirm the seat belongs to the session room,
+        ensure the seat was not purchased yet, and then try to lock it in Redis.
+        """
+        serializer = SeatReservationRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        seat_id = serializer.validated_data["seat_id"]
+
+        session = get_object_or_404(
+            Session.objects.select_related("room", "movie"),
+            id=session_id,
+            is_active=True,
+            movie__is_active=True,
+            start_time__gt=timezone.now(),
+        )
+
+        seat = get_object_or_404(
+            Seat,
+            id=seat_id,
+            room=session.room,
+        )
+
+        purchased_exists = Ticket.objects.filter(
+            session=session,
+            seat=seat,
+            status__in=[Ticket.STATUS_ACTIVE, Ticket.STATUS_USED],
+        ).exists()
+
+        if purchased_exists:
+            return Response(
+                {"detail": "This seat has already been purchased."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        acquired = SeatLockService.acquire_lock(
+            session_id=session.id,
+            seat_id=seat.id,
+            user_id=request.user.id,
+        )
+
+        if not acquired:
+            lock_data = SeatLockService.get_lock_data(
+                session_id=session.id,
+                seat_id=seat.id,
+            )
+            ttl = SeatLockService.get_lock_ttl(
+                session_id=session.id,
+                seat_id=seat.id,
+            )
+
+            return Response(
+                {
+                    "detail": "This seat is currently reserved.",
+                    "locked_by_user_id": lock_data.get("user_id") if lock_data else None,
+                    "expires_in_seconds": ttl if ttl > 0 else 0,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        ttl = SeatLockService.get_lock_ttl(
+            session_id=session.id,
+            seat_id=seat.id,
+        )
+
+        response_payload = {
+            "message": "Seat reserved successfully.",
+            "session_id": session.id,
+            "seat_id": seat.id,
+            "status": "RESERVED",
+            "expires_in_seconds": ttl if ttl > 0 else 0,
+        }
+
+        response_serializer = SeatReservationResponseSerializer(response_payload)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+    
+@extend_schema(
+    tags=['Sessions'],
+    summary='Release a reserved seat lock',
+    description='Releases a Redis seat lock owned by the authenticated user.',
+    request=SeatReservationRequestSerializer,
+    responses={
+        200: OpenApiResponse(
+            response=SeatReleaseResponseSerializer,
+            description='Seat lock released successfully.'
+        ),
+        400: OpenApiResponse(description='Invalid request.'),
+        401: OpenApiResponse(description='Authentication required.'),
+        403: OpenApiResponse(description='The lock does not belong to the authenticated user.'),
+        404: OpenApiResponse(description='Lock not found.')
+    },
+)
+class SessionSeatReleaseView(APIView):
+    """
+    I allow the authenticated user to release their own temporary seat lock.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        serializer = SeatReservationRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        seat_id = serializer.validated_data["seat_id"]
+
+        lock_data = SeatLockService.get_lock_data(session_id=session_id, seat_id=seat_id)
+        if not lock_data:
+            return Response(
+                {"detail": "No active lock was found for this seat."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if lock_data.get("user_id") != request.user.id:
+            return Response(
+                {"detail": "You cannot release a lock owned by another user."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        released = SeatLockService.release_lock(
+            session_id=session_id,
+            seat_id=seat_id,
+            user_id=request.user.id,
+        )
+
+        if not released:
+            return Response(
+                {"detail": "Unable to release the seat lock."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        response_payload = {
+            "message": "Seat lock released successfully.",
+            "session_id": session_id,
+            "seat_id": seat_id,
+            "status": "AVAILABLE",
+        }
+
+        response_serializer = SeatReleaseResponseSerializer(response_payload)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)

@@ -90,3 +90,32 @@ class SeatMapResponseSerializer(serializers.Serializer):
             child=SeatMapSeatSerializer()
         )
     )
+
+class SeatReservationRequestSerializer(serializers.Serializer):
+    """
+    I use this serializer to validate seat reservation requests.
+    """
+
+    seat_id = serializers.IntegerField()
+
+
+class SeatReservationResponseSerializer(serializers.Serializer):
+    """
+    I use this serializer to document successful seat reservation responses.
+    """
+
+    message = serializers.CharField()
+    session_id = serializers.IntegerField()
+    seat_id = serializers.IntegerField()
+    status = serializers.CharField()
+    expires_in_seconds = serializers.IntegerField()
+
+class SeatReleaseResponseSerializer(serializers.Serializer):
+    """
+    I use this serializer to document seat lock release responses.
+    """
+
+    message = serializers.CharField()
+    session_id = serializers.IntegerField()
+    seat_id = serializers.IntegerField()
+    status = serializers.CharField()

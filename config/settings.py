@@ -122,6 +122,18 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
 
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': config('REDIS_URL', default='redis://127.0.0.1:6379/1'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
+
+SEAT_LOCK_TIMEOUT = config('SEAT_LOCK_TIMEOUT', default=600, cast=int)
+
 LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'America/Fortaleza'
