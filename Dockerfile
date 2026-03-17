@@ -1,30 +1,26 @@
-FROM python:3.12-slim
+FROM python:3.10-slim
 
-# Prevent Python from writing .pyc files
 ENV PYTHONDONTWRITEBYTECODE=1
-
-# Ensure logs are sent directly to the terminal
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system packages required for PostgreSQL client libraries and networking checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     netcat-openbsd \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency file first to leverage Docker layer cache
-COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install poetry
 
-# Install Python dependencies
-RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY pyproject.toml poetry.lock /app/
 
-# Copy project files
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-root
+
 COPY . /app/
 
-# Make entrypoint executable
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000

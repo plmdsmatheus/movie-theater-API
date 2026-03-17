@@ -148,7 +148,7 @@ class MovieListTests(MovieBaseTestCase):
         """
         response = self.client.get(self.movie_list_url)
 
-        returned_titles = [movie["title"] for movie in response.data]
+        returned_titles = [movie["title"] for movie in response.data["results"]]
 
         self.assertIn(self.movie.title, returned_titles)
         self.assertNotIn(self.inactive_movie.title, returned_titles)
@@ -172,7 +172,7 @@ class MovieSessionListTests(MovieBaseTestCase):
         """
         response = self.client.get(self.movie_sessions_url)
 
-        returned_session_ids = [session["id"] for session in response.data]
+        returned_session_ids = [session["id"] for session in response.data["results"]]
 
         self.assertIn(self.upcoming_session.id, returned_session_ids)
         self.assertNotIn(self.past_session.id, returned_session_ids)
@@ -626,9 +626,8 @@ class MyTicketsListTests(MovieBaseTestCase):
         response = self.client.get(self.my_tickets_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 3)
-
-        returned_codes = [ticket["ticket_code"] for ticket in response.data]
+        self.assertEqual(response.data["count"], 3)
+        returned_codes = [ticket["ticket_code"] for ticket in response.data["results"]]
         self.assertIn("future-ticket", returned_codes)
         self.assertIn("past-ticket", returned_codes)
         self.assertIn("used-ticket", returned_codes)
