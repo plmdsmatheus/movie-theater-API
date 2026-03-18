@@ -79,17 +79,157 @@ Using **Celery + Redis**:
 ```bash
 git clone https://github.com/seu-usuario/cinepolis-natal-api.git
 cd cinepolis-natal-api
+```
 
-## 2. Crie o .env
+## 2. Create the .env file
+
 ```bash
-SECRET_KEY=your-secret-key
-DEBUG=True
+SECRET_KEY=
+DEBUG=False
+ALLOWED_HOSTS=127.0.0.1,localhost
 
 DB_NAME=cinepolis_db
 DB_USER=cinepolis_user
-DB_PASSWORD=cinepolis_password
+DB_PASSWORD=
 DB_HOST=db
 DB_PORT=5432
 
 REDIS_URL=redis://redis:6379/1
 
+SEAT_LOCK_TIMEOUT=600
+
+MOVIES_LIST_CACHE_TTL=300
+MOVIE_SESSIONS_CACHE_TTL=120
+```
+
+## 3. Upload Container
+
+```bash
+docker compose up --build
+```
+
+## 4. Run Migrations
+
+```bash
+docker compose exec web poetry run python manage.py migrate
+```
+
+## API documentation
+Swagger is available at ```http://localhost:8000/api/schema/swagger-ui/```
+
+---
+
+# 🔑 Authentication
+Login
+
+```bash
+POST /api/auth/login/
+```
+Refresh Token
+
+```bash
+POST /api/auth/refresh/
+```
+# 🎯 Key endpoints
+### 🎬 Movies
+
+```bash
+GET /api/movies/
+```
+Lists all available movies.
+
+### 🎥 Sessions
+
+```bash
+GET /api/movies/{movie_id}/sessions/
+```
+List of upcoming sessions for a movie.
+
+### 💺 Seat Map
+
+```bash
+GET /api/sessions/{session_id}/seat-map/
+```
+Returns a seating chart with the following statuses:
+
+- AVAILABLE
+- RESERVED
+- PURCHASED
+
+### 🔒 Reserve Seat
+
+```bash
+POST /api/sessions/{session_id}/reserve-seat/
+```
+
+Creates a temporary lock (Redis - 10 minutes)
+
+### 🛒 Checkout
+
+```bash
+POST /api/sessions/{session_id}/checkout/
+```
+- validate lock
+- create ticket
+- remove lock
+- trigger asynchronous task (email)
+
+### 🎟 My Tickets
+
+```bash
+GET /api/my-tickets/
+GET /api/my-tickets/?type=active
+GET /api/my-tickets/?type=history
+```
+---
+# Pagination
+All listing endpoints use pagination:
+```JSON
+{
+  "count": 100,
+  "next": "...",
+  "previous": null,
+  "results": []
+}
+```
+Available parameters:
+```JSON
+?page=1
+?page_size=10
+```
+---
+
+# ⚙️ CI/CD 
+Pipeline with GitHub Actions:
+- installs dependencies using Poetry
+- runs migrations
+- runs automated tests
+Runs on:
+- every push
+- every pull request
+---
+
+# 🧪 Tests
+Run locally:
+```bash
+docker compose exec web poetry run python manage.py test
+```
+Coverage includes:
+- authentication
+- listings
+- seat reservations
+- checkout
+- business rules
+- edge cases
+---
+# ⚡ Celery
+
+Available services:
+- celery_worker
+- celery_beat
+
+Logs:
+
+```bash
+docker compose logs -f celery_worker
+```
