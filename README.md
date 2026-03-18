@@ -77,8 +77,8 @@ Using **Celery + Redis**:
 ## 1. Clone the repository
 
 ```bash
-git clone https://github.com/seu-usuario/cinepolis-natal-api.git
-cd cinepolis-natal-api
+git clone https://github.com/plmdsmatheus/movie-theater-API.git
+cd cmovie-theater-API
 ```
 
 ## 2. Create the .env file
