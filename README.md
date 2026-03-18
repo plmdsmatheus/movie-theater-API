@@ -78,7 +78,7 @@ Using **Celery + Redis**:
 
 ```bash
 git clone https://github.com/plmdsmatheus/movie-theater-API.git
-cd cmovie-theater-API
+cd movie-theater-API
 ```
 
 ## 2. Create the .env file
