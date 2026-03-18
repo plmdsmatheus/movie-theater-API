@@ -1,16 +1,13 @@
 from pathlib import Path
 from datetime import timedelta
+from decouple import config, Csv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-0r^h%46gv3-!&l)1fsv!sfuj+bcw-ohdf_(=&l$k%pn!j(pfsv'
+SECRET_KEY = config('SECRET_KEY')
+DEBUG = config('DEBUG', default=False, cast=bool)
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost', cast=Csv())
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -26,6 +23,7 @@ INSTALLED_APPS = [
     # DRF and JWT
     'rest_framework',
     'rest_framework_simplejwt',
+    'drf_spectacular',
 
     # apps
     'apps.users',
@@ -75,11 +73,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'cinepolis_db',
-        'USER': 'cinepolis_user',
-        'PASSWORD': 'cinepolisForte123@',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': config('DB_NAME'),
+        'USER': config('DB_USER'),
+        'PASSWORD': config('DB_PASSWORD'),
+        'HOST': config('DB_HOST', default='localhost'),
+        'PORT': config('DB_PORT', default='5432'),
     }
 }
 
@@ -108,6 +106,28 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.DefaultPagination',
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+        'login': '10/minute',
+        'register': '5/minute',
+        'seat_reserve': '20/minute',
+        'seat_checkout': '20/minute',
+    },
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Cinépolis Natal API',
+    'DESCRIPTION': 'API for managing movies, sessions, reservations, and tickets.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
 }
 
 SIMPLE_JWT = {
@@ -115,24 +135,55 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
 
-# Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': config('REDIS_URL', default='redis://127.0.0.1:6379/1'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
+
+# Cache for Movies and Sessions
+MOVIES_LIST_CACHE_TTL = config('MOVIES_LIST_CACHE_TTL', default=300, cast=int)
+MOVIE_SESSIONS_CACHE_TTL = config('MOVIE_SESSIONS_CACHE_TTL', default=120, cast=int)
+
+# Lock Seat
+SEAT_LOCK_TIMEOUT = config('SEAT_LOCK_TIMEOUT', default=600, cast=int)
+
+
+TIME_ZONE = 'America/Fortaleza'
+
+
+# Celery Configs
+CELERY_BROKER_URL = config("REDIS_URL", default="redis://redis:6379/1")
+CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://redis:6379/1")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-movie-cache": {
+        "task": "apps.movies.tasks.cleanup_movie_cache_task",
+        "schedule": 300.0,
+    },
+}
+
 
 LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
-
 STATIC_URL = 'static/'
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Configuration to display the “Email” field in the container log
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "no-reply@cinepolis.local"

@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cinepolis_test_db
+          POSTGRES_USER: cinepolis_user
+          POSTGRES_PASSWORD: cinepolis_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U cinepolis_user -d cinepolis_test_db"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      SECRET_KEY: test-secret-key
+      DEBUG: False
+      ALLOWED_HOSTS: 127.0.0.1,localhost
+
+      DB_NAME: cinepolis_test_db
+      DB_USER: cinepolis_user
+      DB_PASSWORD: cinepolis_password
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+
+      REDIS_URL: redis://127.0.0.1:6379/1
+      SEAT_LOCK_TIMEOUT: 600
+      MOVIES_LIST_CACHE_TTL: 300
+      MOVIE_SESSIONS_CACHE_TTL: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.create false
+          poetry install --no-interaction --no-ansi --no-root
+
+      - name: Run Django system checks
+        run: python manage.py check
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run automated tests
+        run: python manage.py test
