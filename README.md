@@ -114,6 +114,13 @@ docker compose up --build
 docker compose exec web poetry run python manage.py migrate
 ```
 
+## 5. Seed
+Run the seed to populate the database
+
+``bash
+docker compose exec web poetry run python manage.py seed_data
+```
+
 ## API documentation
 Swagger is available at ```http://localhost:8000/api/schema/swagger-ui/```
 
