@@ -117,7 +117,7 @@ docker compose exec web poetry run python manage.py migrate
 ## 5. Seed
 Run the seed to populate the database
 
-``bash
+```bash
 docker compose exec web poetry run python manage.py seed_data
 ```
 
